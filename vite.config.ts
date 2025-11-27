@@ -8,6 +8,13 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/K3Cloud': {
+            target: 'http://39.108.116.74',
+            changeOrigin: true,
+            rewrite: (path) => path
+          }
+        }
       },
       plugins: [react()],
       define: {

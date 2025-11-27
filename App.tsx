@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, PieChart, Pie, Cell, LineChart, Line, Legend,
   ComposedChart, CartesianGrid
 } from 'recharts';
-import { 
+import {
   Activity, Database, Zap, Upload, Download, Factory
 } from 'lucide-react';
 
@@ -13,9 +13,146 @@ import { INITIAL_DATA } from './constants';
 import { DashboardData } from './types';
 import { parseExcelFile } from './utils/excelParser';
 import { exportDashboardData } from './utils/excelExporter';
+import {
+  startInventorySync,
+  getCachedInventory,
+  formatInventoryForDashboard,
+  getLastUpdateTime
+} from './services/inventoryService';
 
 const App: React.FC = () => {
   const [data, setData] = useState<DashboardData>(INITIAL_DATA);
+  const [headerVisible, setHeaderVisible] = useState<boolean>(false); // 默认隐藏
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // 按T键切换标题栏显示/隐藏
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.key === 't' || e.key === 'T') {
+        setHeaderVisible(prev => !prev);
+        console.log('标题栏切换:', !headerVisible ? '显示' : '隐藏');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [headerVisible]);
+
+  // 启动库存数据同步
+  useEffect(() => {
+    console.log('=== 启动K3 Cloud库存数据同步 ===');
+
+    // 启动同步任务
+    startInventorySync();
+
+    // 立即检查一次
+    setTimeout(() => {
+      const inventory = getCachedInventory();
+      console.log('首次检查库存数据:', inventory.length, '条');
+      if (inventory.length > 0) {
+        const formattedData = formatInventoryForDashboard(inventory);
+        console.log('格式化后的数据:', formattedData.length, '条');
+        setData(prev => ({
+          ...prev,
+          inventoryTable: formattedData
+        }));
+      }
+    }, 2000); // 2秒后首次检查
+
+    // 定期检查并更新库存数据到界面
+    const checkInterval = setInterval(() => {
+      const inventory = getCachedInventory();
+      if (inventory.length > 0) {
+        const formattedData = formatInventoryForDashboard(inventory);
+        console.log('更新库存数据到界面:', formattedData.length, '条');
+        setData(prev => ({
+          ...prev,
+          inventoryTable: formattedData
+        }));
+      } else {
+        console.log('等待K3 Cloud数据...');
+      }
+    }, 3000); // 每3秒检查一次
+
+    return () => {
+      clearInterval(checkInterval);
+    };
+  }, []);
+
+  // 库存表格行级滚动动画
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      console.log('滚动容器未找到');
+      return;
+    }
+
+    let scrollInterval: NodeJS.Timeout;
+    let isScrolling = true;
+
+    // 延迟启动，确保DOM完全渲染
+    const timer = setTimeout(() => {
+      const { scrollHeight, clientHeight } = scrollContainer;
+      console.log('库存表格滚动初始化:', {
+        scrollHeight,
+        clientHeight,
+        canScroll: scrollHeight > clientHeight,
+        dataLength: data.inventoryTable.length
+      });
+
+      // 只有当内容高度大于容器高度时才启动滚动
+      if (scrollHeight > clientHeight) {
+        let targetScroll = 0;
+        const rowHeight = scrollHeight / data.inventoryTable.length; // 估算每行高度
+
+        scrollInterval = setInterval(() => {
+          if (!isScrolling) return;
+
+          // 平滑滚动到下一个位置
+          targetScroll += rowHeight;
+
+          // 如果滚动到底部，重置到顶部
+          if (targetScroll >= scrollHeight - clientHeight) {
+            scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            targetScroll = 0;
+          } else {
+            scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
+          }
+
+          console.log('滚动到:', targetScroll, '总高度:', scrollHeight);
+        }, 2000); // 每2秒滚动一行
+      } else {
+        console.log('表格内容不足以滚动，数据量:', data.inventoryTable.length);
+      }
+    }, 500); // 增加延迟到500ms
+
+    // 鼠标悬停时暂停滚动
+    const handleMouseEnter = () => {
+      isScrolling = false;
+      console.log('滚动已暂停');
+    };
+
+    const handleMouseLeave = () => {
+      isScrolling = true;
+      console.log('滚动已恢复');
+    };
+
+    scrollContainer.addEventListener('mouseenter', handleMouseEnter);
+    scrollContainer.addEventListener('mouseleave', handleMouseLeave);
+
+    return () => {
+      clearTimeout(timer);
+      if (scrollInterval) {
+        clearInterval(scrollInterval);
+      }
+      if (scrollContainer) {
+        scrollContainer.removeEventListener('mouseenter', handleMouseEnter);
+        scrollContainer.removeEventListener('mouseleave', handleMouseLeave);
+      }
+    };
+  }, [data.inventoryTable]);
 
   // File Upload Handler
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,7 +180,7 @@ const App: React.FC = () => {
     exportDashboardData(data);
   };
   
-  // Reusable Gauge Ring Component
+  // Reusable Gauge Ring Component - 根据值显示进度
   const GaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
     const data = [{ name: 'val', value: value }, { name: 'rem', value: 100 - value }];
     return (
@@ -77,37 +214,75 @@ const App: React.FC = () => {
     );
   };
 
+  // 库存指标环形圈 - 填满效果（仅用于库存数据指标）
+  const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
+    const data = [{ name: 'val', value: 100 }]; // 填满整个圆环
+    return (
+        <div className="flex flex-col items-center justify-center relative">
+            <div className="relative w-20 h-20 md:w-24 md:h-24">
+                <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                        <Pie
+                            data={data}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={32}
+                            outerRadius={40}
+                            startAngle={90}
+                            endAngle={-270}
+                            dataKey="value"
+                            stroke="none"
+                        >
+                            <Cell fill={color} />
+                        </Pie>
+                    </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
+                     <span className="text-lg md:text-xl font-bold font-mono" style={{ color }}>{value}{unit || '%'}</span>
+                     {subTitle && <span className="text-[10px] text-slate-400">{subTitle}</span>}
+                </div>
+            </div>
+            {title && <span className="text-xs text-slate-300 font-medium mt-1">{title}</span>}
+        </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#0b1121] text-slate-200 p-2 font-sans overflow-hidden bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-blend-overlay">
       <div className="absolute inset-0 bg-[#0f172a]/95 pointer-events-none"></div>
       
-      {/* Header */}
-      <header className="relative z-10 flex justify-between items-center mb-2 border-b border-slate-700/50 pb-2 h-[50px]">
+      {/* Header - 可通过T键切换显示/隐藏 */}
+      <header
+        className={`relative z-10 flex justify-between items-center mb-2 border-b border-slate-700/50 pb-2 transition-all duration-500 ease-in-out overflow-hidden ${
+          headerVisible ? 'h-[50px] opacity-100' : 'h-0 opacity-0 mb-0 pb-0 border-b-0'
+        }`}
+        style={{ transformOrigin: 'top' }}
+      >
         <div className="flex items-center gap-3 pl-2">
             <Factory className="w-6 h-6 text-cyan-400" />
             <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+                <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent whitespace-nowrap">
                     数字化智能工厂看板
                 </h1>
             </div>
         </div>
-        
+
         <div className="flex gap-4 items-center pr-2">
-            <button 
+            <button
                 onClick={handleExport}
-                className="flex items-center gap-2 px-3 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors border border-slate-700 rounded bg-slate-800/50 backdrop-blur"
+                className="flex items-center gap-2 px-3 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors border border-slate-700 rounded bg-slate-800/50 backdrop-blur whitespace-nowrap"
             >
                 <Upload size={14} />
                 导出Excel数据
             </button>
-            
+
             <div className="relative">
-                <button className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-white bg-cyan-600/80 hover:bg-cyan-500 transition-all rounded backdrop-blur">
+                <button className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-white bg-cyan-600/80 hover:bg-cyan-500 transition-all rounded backdrop-blur whitespace-nowrap">
                     <Download size={14} />
                     导入Excel数据
                 </button>
-                <input 
-                    type="file" 
+                <input
+                    type="file"
                     accept=".xlsx, .xls"
                     onChange={handleFileUpload}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -117,8 +292,17 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* T键提示 - 仅在隐藏时显示 */}
+      {!headerVisible && (
+        <div className="fixed top-4 right-4 z-50 bg-slate-800/90 backdrop-blur-sm border border-cyan-500/30 rounded px-3 py-1.5 text-xs text-cyan-300 animate-pulse">
+          按 <kbd className="px-1.5 py-0.5 bg-slate-700 rounded font-mono font-bold">T</kbd> 显示标题栏
+        </div>
+      )}
+
       {/* Main Grid */}
-      <div className="relative z-10 grid grid-cols-12 gap-3 h-[calc(100vh-80px)]">
+      <div className={`relative z-10 grid grid-cols-12 gap-3 transition-all duration-500 ${
+        headerVisible ? 'h-[calc(100vh-80px)]' : 'h-[calc(100vh-20px)]'
+      }`}>
         
         {/* Left Column (3/12) */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
@@ -161,7 +345,7 @@ const App: React.FC = () => {
                  <div className="flex justify-around items-center h-[100px] mb-2 border-b border-slate-700/30">
                      {data.inventoryMetrics.map((m, i) => (
                          <div key={i} className="scale-90">
-                             <GaugeRing value={Math.round((m.value / m.total) * 100)} color={m.color} title={m.label} unit="吨" subTitle={m.value.toString()}/>
+                             <InventoryGaugeRing value={m.value} color={m.color} title={m.label} unit="吨" subTitle={m.value.toString()}/>
                          </div>
                      ))}
                  </div>
@@ -172,7 +356,7 @@ const App: React.FC = () => {
                      <span className="w-1/4">仓库名称</span>
                      <span className="w-1/4 text-right">库存量(KG)</span>
                  </div>
-                 <div className="flex-1 overflow-auto custom-scrollbar">
+                 <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar" style={{ scrollBehavior: 'smooth' }}>
                      <table className="w-full text-[10px] text-left border-collapse">
                          <tbody className="divide-y divide-slate-800/50">
                              {data.inventoryTable.map((row, idx) => (
