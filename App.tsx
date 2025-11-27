@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, PieChart, Pie, Cell, LineChart, Line, Legend,
@@ -16,14 +16,161 @@ import { exportDashboardData } from './utils/excelExporter';
 import {
   startInventorySync,
   getCachedInventory,
-  formatInventoryForDashboard,
-  getLastUpdateTime
+  formatInventoryForDashboard
 } from './services/inventoryService';
+
+type InventoryPanelProps = {
+  metrics: DashboardData['inventoryMetrics'];
+  initialTable: DashboardData['inventoryTable'];
+  onTableChange?: (rows: DashboardData['inventoryTable']) => void;
+};
+
+// 库存指标环形圈 - 填满效果（仅用于库存数据指标）
+const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
+  const data = [{ name: 'val', value: 100 }]; // 填满整个圆环
+  return (
+      <div className="flex flex-col items-center justify-center relative">
+          <div className="relative w-20 h-20 md:w-24 md:h-24">
+              <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                      <Pie
+                          data={data}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={32}
+                          outerRadius={40}
+                          startAngle={90}
+                          endAngle={-270}
+                          dataKey="value"
+                          stroke="none"
+                      >
+                          <Cell fill={color} />
+                      </Pie>
+                  </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
+                   <span className="text-lg md:text-xl font-bold font-mono" style={{ color }}>{value}{unit || '%'}</span>
+                   {subTitle && <span className="text-[10px] text-slate-400">{subTitle}</span>}
+              </div>
+          </div>
+          {title && <span className="text-xs text-slate-300 font-medium mt-1">{title}</span>}
+      </div>
+  );
+};
+
+const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, initialTable, onTableChange }) => {
+  const [inventoryTable, setInventoryTable] = useState(initialTable);
+  const [inventorySlide, setInventorySlide] = useState<number>(0);
+  const [inventoryPaused, setInventoryPaused] = useState<boolean>(false);
+  const rowsPerSlide = 6;
+
+  const inventoryRows = inventoryTable;
+
+  const visibleInventoryRows = useMemo(() => {
+    if (!inventoryRows.length) return [];
+    const windowSize = Math.min(rowsPerSlide, inventoryRows.length);
+    const start = inventorySlide % inventoryRows.length;
+    const loopedRows = [...inventoryRows, ...inventoryRows];
+    return loopedRows.slice(start, start + windowSize);
+  }, [inventoryRows, inventorySlide, rowsPerSlide]);
+
+  // 外部数据变更时（例如导入Excel）刷新列表，但不触发其他区域重渲染
+  useEffect(() => {
+    setInventoryTable(initialTable);
+    onTableChange?.(initialTable);
+  }, [initialTable, onTableChange]);
+
+  // 启动库存同步，只影响该组件
+  useEffect(() => {
+    console.log('=== 启动库存数据同步（仅库存卡片） ===');
+    startInventorySync();
+
+    const checkInterval = setInterval(() => {
+      const inventory = getCachedInventory();
+      if (inventory.length > 0) {
+        const formattedData = formatInventoryForDashboard(inventory);
+        setInventoryTable(formattedData);
+        onTableChange?.(formattedData);
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(checkInterval);
+    };
+  }, [onTableChange]);
+
+  // 幻灯片行切换
+  useEffect(() => {
+    if (!inventoryRows.length) return;
+    setInventorySlide(prev => prev % inventoryRows.length);
+  }, [inventoryRows.length]);
+
+  useEffect(() => {
+    if (!inventoryRows.length || inventoryPaused) return;
+
+    const timer = setInterval(() => {
+      setInventorySlide(prev => (prev + 1) % inventoryRows.length);
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [inventoryRows.length, inventoryPaused]);
+
+  return (
+    <Card title="库存数据" icon={<Database size={14}/>} className="h-[42%] flex flex-col">
+         <div className="flex justify-around items-center h-[100px] mb-2 border-b border-slate-700/30">
+             {metrics.map((m, i) => (
+                 <div key={i} className="scale-90">
+                     <InventoryGaugeRing value={m.value} color={m.color} title={m.label} unit="吨" subTitle={m.value.toString()}/>
+                 </div>
+             ))}
+         </div>
+         
+         <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-500 bg-slate-800/50 rounded-t border-b border-slate-700">
+             <span className="w-1/4">物料名称</span>
+             <span className="w-1/4">物料编码</span>
+             <span className="w-1/4">仓库名称</span>
+             <span className="w-1/4 text-right">库存量(KG)</span>
+         </div>
+         <div
+           className="flex-1 overflow-hidden overflow-x-hidden custom-scrollbar"
+           onMouseEnter={() => setInventoryPaused(true)}
+           onMouseLeave={() => setInventoryPaused(false)}
+         >
+             <table className="w-full text-[10px] text-left border-collapse">
+                 <tbody
+                   key={`inventory-${inventorySlide}`}
+                   className="divide-y divide-slate-800/50 transition-all duration-700"
+                 >
+                     {visibleInventoryRows.length === 0 ? (
+                       <tr>
+                         <td colSpan={4} className="p-3 text-center text-slate-400">暂无库存数据</td>
+                       </tr>
+                     ) : (
+                       visibleInventoryRows.map((row, idx) => (
+                         <tr
+                           key={`${row.id}-${inventorySlide}-${idx}`}
+                           className={`${idx % 2 === 0 ? 'bg-slate-800/20' : ''} hover:bg-slate-700/30 transition-colors inventory-slide`}
+                           style={{ animationDelay: `${idx * 80}ms` }}
+                         >
+                             <td className="p-2 text-cyan-100">{row.name}</td>
+                             <td className="p-2 text-slate-400 font-mono">{row.code}</td>
+                             <td className="p-2 text-slate-400">{row.warehouse}</td>
+                             <td className="p-2 text-right font-mono text-cyan-300 font-bold">{row.quantity.toLocaleString()}</td>
+                         </tr>
+                       ))
+                     )}
+                 </tbody>
+             </table>
+         </div>
+    </Card>
+  );
+});
+
 
 const App: React.FC = () => {
   const [data, setData] = useState<DashboardData>(INITIAL_DATA);
   const [headerVisible, setHeaderVisible] = useState<boolean>(false); // 默认隐藏
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const latestInventoryRef = useRef(data.inventoryTable);
 
   // 按T键切换标题栏显示/隐藏
   useEffect(() => {
@@ -40,118 +187,9 @@ const App: React.FC = () => {
     };
   }, [headerVisible]);
 
-  // 启动库存数据同步
+  // 同步外部导入的库存到导出用的ref，避免影响其他区域渲染
   useEffect(() => {
-    console.log('=== 启动K3 Cloud库存数据同步 ===');
-
-    // 启动同步任务
-    startInventorySync();
-
-    // 立即检查一次
-    setTimeout(() => {
-      const inventory = getCachedInventory();
-      console.log('首次检查库存数据:', inventory.length, '条');
-      if (inventory.length > 0) {
-        const formattedData = formatInventoryForDashboard(inventory);
-        console.log('格式化后的数据:', formattedData.length, '条');
-        setData(prev => ({
-          ...prev,
-          inventoryTable: formattedData
-        }));
-      }
-    }, 2000); // 2秒后首次检查
-
-    // 定期检查并更新库存数据到界面
-    const checkInterval = setInterval(() => {
-      const inventory = getCachedInventory();
-      if (inventory.length > 0) {
-        const formattedData = formatInventoryForDashboard(inventory);
-        console.log('更新库存数据到界面:', formattedData.length, '条');
-        setData(prev => ({
-          ...prev,
-          inventoryTable: formattedData
-        }));
-      } else {
-        console.log('等待K3 Cloud数据...');
-      }
-    }, 3000); // 每3秒检查一次
-
-    return () => {
-      clearInterval(checkInterval);
-    };
-  }, []);
-
-  // 库存表格行级滚动动画
-  useEffect(() => {
-    const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer) {
-      console.log('滚动容器未找到');
-      return;
-    }
-
-    let scrollInterval: NodeJS.Timeout;
-    let isScrolling = true;
-
-    // 延迟启动，确保DOM完全渲染
-    const timer = setTimeout(() => {
-      const { scrollHeight, clientHeight } = scrollContainer;
-      console.log('库存表格滚动初始化:', {
-        scrollHeight,
-        clientHeight,
-        canScroll: scrollHeight > clientHeight,
-        dataLength: data.inventoryTable.length
-      });
-
-      // 只有当内容高度大于容器高度时才启动滚动
-      if (scrollHeight > clientHeight) {
-        let targetScroll = 0;
-        const rowHeight = scrollHeight / data.inventoryTable.length; // 估算每行高度
-
-        scrollInterval = setInterval(() => {
-          if (!isScrolling) return;
-
-          // 平滑滚动到下一个位置
-          targetScroll += rowHeight;
-
-          // 如果滚动到底部，重置到顶部
-          if (targetScroll >= scrollHeight - clientHeight) {
-            scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
-            targetScroll = 0;
-          } else {
-            scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
-          }
-
-          console.log('滚动到:', targetScroll, '总高度:', scrollHeight);
-        }, 2000); // 每2秒滚动一行
-      } else {
-        console.log('表格内容不足以滚动，数据量:', data.inventoryTable.length);
-      }
-    }, 500); // 增加延迟到500ms
-
-    // 鼠标悬停时暂停滚动
-    const handleMouseEnter = () => {
-      isScrolling = false;
-      console.log('滚动已暂停');
-    };
-
-    const handleMouseLeave = () => {
-      isScrolling = true;
-      console.log('滚动已恢复');
-    };
-
-    scrollContainer.addEventListener('mouseenter', handleMouseEnter);
-    scrollContainer.addEventListener('mouseleave', handleMouseLeave);
-
-    return () => {
-      clearTimeout(timer);
-      if (scrollInterval) {
-        clearInterval(scrollInterval);
-      }
-      if (scrollContainer) {
-        scrollContainer.removeEventListener('mouseenter', handleMouseEnter);
-        scrollContainer.removeEventListener('mouseleave', handleMouseLeave);
-      }
-    };
+    latestInventoryRef.current = data.inventoryTable;
   }, [data.inventoryTable]);
 
   // File Upload Handler
@@ -177,7 +215,10 @@ const App: React.FC = () => {
   };
 
   const handleExport = () => {
-    exportDashboardData(data);
+    exportDashboardData({
+      ...data,
+      inventoryTable: latestInventoryRef.current
+    });
   };
   
   // Reusable Gauge Ring Component - 根据值显示进度
@@ -201,39 +242,6 @@ const App: React.FC = () => {
                         >
                             <Cell fill={color} />
                             <Cell fill="#1e293b" />
-                        </Pie>
-                    </PieChart>
-                </ResponsiveContainer>
-                <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
-                     <span className="text-lg md:text-xl font-bold font-mono" style={{ color }}>{value}{unit || '%'}</span>
-                     {subTitle && <span className="text-[10px] text-slate-400">{subTitle}</span>}
-                </div>
-            </div>
-            {title && <span className="text-xs text-slate-300 font-medium mt-1">{title}</span>}
-        </div>
-    );
-  };
-
-  // 库存指标环形圈 - 填满效果（仅用于库存数据指标）
-  const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
-    const data = [{ name: 'val', value: 100 }]; // 填满整个圆环
-    return (
-        <div className="flex flex-col items-center justify-center relative">
-            <div className="relative w-20 h-20 md:w-24 md:h-24">
-                <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                        <Pie
-                            data={data}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={32}
-                            outerRadius={40}
-                            startAngle={90}
-                            endAngle={-270}
-                            dataKey="value"
-                            stroke="none"
-                        >
-                            <Cell fill={color} />
                         </Pie>
                     </PieChart>
                 </ResponsiveContainer>
@@ -341,36 +349,11 @@ const App: React.FC = () => {
             </Card>
 
             {/* Inventory Data */}
-            <Card title="库存数据" icon={<Database size={14}/>} className="h-[42%] flex flex-col">
-                 <div className="flex justify-around items-center h-[100px] mb-2 border-b border-slate-700/30">
-                     {data.inventoryMetrics.map((m, i) => (
-                         <div key={i} className="scale-90">
-                             <InventoryGaugeRing value={m.value} color={m.color} title={m.label} unit="吨" subTitle={m.value.toString()}/>
-                         </div>
-                     ))}
-                 </div>
-                 
-                 <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-500 bg-slate-800/50 rounded-t border-b border-slate-700">
-                     <span className="w-1/4">物料名称</span>
-                     <span className="w-1/4">物料编码</span>
-                     <span className="w-1/4">仓库名称</span>
-                     <span className="w-1/4 text-right">库存量(KG)</span>
-                 </div>
-                 <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar" style={{ scrollBehavior: 'smooth' }}>
-                     <table className="w-full text-[10px] text-left border-collapse">
-                         <tbody className="divide-y divide-slate-800/50">
-                             {data.inventoryTable.map((row, idx) => (
-                                 <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-slate-800/20' : ''} hover:bg-slate-700/30 transition-colors`}>
-                                     <td className="p-2 text-cyan-100">{row.name}</td>
-                                     <td className="p-2 text-slate-400 font-mono">{row.code}</td>
-                                     <td className="p-2 text-slate-400">{row.warehouse}</td>
-                                     <td className="p-2 text-right font-mono text-cyan-300 font-bold">{row.quantity.toLocaleString()}</td>
-                                 </tr>
-                             ))}
-                         </tbody>
-                     </table>
-                 </div>
-            </Card>
+            <InventoryPanel
+              metrics={data.inventoryMetrics}
+              initialTable={data.inventoryTable}
+              onTableChange={(rows) => { latestInventoryRef.current = rows; }}
+            />
         </div>
 
         {/* Center Column (6/12) */}

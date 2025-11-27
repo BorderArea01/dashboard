@@ -27,6 +27,22 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #64748b; 
       }
+
+      /* 库存表格幻灯片淡入效果 */
+      .inventory-slide {
+        animation: inventoryFade 0.8s ease both;
+      }
+
+      @keyframes inventoryFade {
+        from {
+          transform: translateY(8px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
     </style>
   <script type="importmap">
 {
