@@ -26,15 +26,13 @@ RUN npm run build
 # ==============================
 FROM node:20-alpine
 
-# 安装nginx和supervisor（进程管理）
-RUN apk add --no-cache nginx supervisor tzdata && \
+# 安装nginx和必要工具
+RUN apk add --no-cache nginx tzdata bash && \
     # 设置时区为中国
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     # 创建nginx运行目录
-    mkdir -p /run/nginx && \
-    # 创建日志目录
-    mkdir -p /var/log/supervisor
+    mkdir -p /run/nginx
 
 WORKDIR /app
 
@@ -51,7 +49,10 @@ COPY --from=builder /app/constants.ts ./
 
 # 复制配置文件
 COPY nginx.conf /etc/nginx/http.d/default.conf
-COPY supervisord.conf /etc/supervisord.conf
+
+# 复制启动脚本
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # 创建数据目录（用于持久化缓存文件）
 RUN mkdir -p /data && \
@@ -66,7 +67,7 @@ EXPOSE 80
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost/index.html || exit 1
+    CMD wget --quiet --tries=1 --spider http://localhost/health || exit 1
 
-# 使用supervisor管理多个进程
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+# 使用启动脚本管理服务
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
