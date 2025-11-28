@@ -144,12 +144,12 @@ function decodeAppSecret(appSecret: string): string {
 /**
  * 查询K3 Cloud库存数据
  * @param warehouseCode 仓库编码，如 'CK0201'
- * @param limit 返回记录数限制
+ * @param limit 返回记录数限制，默认为0表示不限制
  * @returns 库存数据数组
  */
 export async function queryInventory(
   warehouseCode: string,
-  limit: number = 100
+  limit: number = 0
 ): Promise<InventoryItem[]> {
   const serviceName = 'Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.ExecuteBillQuery';
   const apiUrl = `${getServerUrl()}/${serviceName}.common.kdsvc`;
