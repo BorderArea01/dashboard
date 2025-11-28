@@ -1,6 +1,17 @@
+const K3_CLOUD_BASE = 'http://39.108.116.74/K3Cloud';
+
+// 根据运行环境返回服务地址：浏览器走相对地址以使用 Vite 代理，Node/生产走真实地址
+function getServerUrl(): string {
+  const isBrowser = typeof window !== 'undefined';
+  // 开发环境下通过 Vite 代理 /K3Cloud -> http://39.108.116.74
+  if (isBrowser && import.meta.env?.DEV) {
+    return '/K3Cloud';
+  }
+  return K3_CLOUD_BASE;
+}
+
 // K3 Cloud配置信息
 const K3_CONFIG = {
-  SERVER_URL: 'http://39.108.116.74/K3Cloud',
   ACCT_ID: '67bc259cd48a3e',
   APP_ID: '402557_627IR9EKVnm+0WzOWe6rVZVNRhR6Sqpo',
   APP_SECRET: 'e71a8a379540498f886b0a7a926e70b8',
@@ -141,7 +152,7 @@ export async function queryInventory(
   limit: number = 100
 ): Promise<InventoryItem[]> {
   const serviceName = 'Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.ExecuteBillQuery';
-  const apiUrl = `${K3_CONFIG.SERVER_URL}/${serviceName}.common.kdsvc`;
+  const apiUrl = `${getServerUrl()}/${serviceName}.common.kdsvc`;
 
   // 准备请求数据
   const payload = {

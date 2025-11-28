@@ -83,7 +83,10 @@ export function formatInventoryForDashboard(inventory: InventoryItem[]): Array<{
   warehouse: string;
   quantity: number;
 }> {
-  return inventory.map((item, index) => ({
+  const filtered = inventory.filter(item => (item.quantity ?? 0) > 0);
+  const source = filtered.length > 0 ? filtered : inventory; // 若全为0，则显示原始数据避免空表
+
+  return source.map((item, index) => ({
     id: `inv-${index}`,
     name: item.materialName,
     code: item.materialCode,

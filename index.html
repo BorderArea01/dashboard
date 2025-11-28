@@ -33,6 +33,22 @@
         animation: inventoryFade 0.8s ease both;
       }
 
+      /* 库存表格平滑纵向滚动（不撑开容器） */
+      .inventory-marquee {
+        display: block;
+        animation: inventoryMarquee linear infinite;
+        will-change: transform;
+      }
+      .inventory-marquee tr {
+        display: table;
+        width: 100%;
+        table-layout: fixed;
+      }
+      @keyframes inventoryMarquee {
+        0% { transform: translateY(0); }
+        100% { transform: translateY(-50%); }
+      }
+
       @keyframes inventoryFade {
         from {
           transform: translateY(8px);

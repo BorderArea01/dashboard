@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, PieChart, Pie, Cell, LineChart, Line, Legend,
@@ -14,10 +14,9 @@ import { DashboardData } from './types';
 import { parseExcelFile } from './utils/excelParser';
 import { exportDashboardData } from './utils/excelExporter';
 import {
-  startInventorySync,
-  getCachedInventory,
   formatInventoryForDashboard
 } from './services/inventoryService';
+import { queryAllWarehousesInventory } from './services/k3cloud';
 
 type InventoryPanelProps = {
   metrics: DashboardData['inventoryMetrics'];
@@ -60,60 +59,41 @@ const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: nu
 
 const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, initialTable, onTableChange }) => {
   const [inventoryTable, setInventoryTable] = useState(initialTable);
-  const [inventorySlide, setInventorySlide] = useState<number>(0);
   const [inventoryPaused, setInventoryPaused] = useState<boolean>(false);
-  const rowsPerSlide = 6;
-
-  const inventoryRows = inventoryTable;
-
-  const visibleInventoryRows = useMemo(() => {
-    if (!inventoryRows.length) return [];
-    const windowSize = Math.min(rowsPerSlide, inventoryRows.length);
-    const start = inventorySlide % inventoryRows.length;
-    const loopedRows = [...inventoryRows, ...inventoryRows];
-    return loopedRows.slice(start, start + windowSize);
-  }, [inventoryRows, inventorySlide, rowsPerSlide]);
-
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const marqueeRows = inventoryTable.length ? [...inventoryTable, ...inventoryTable] : [];
+  const marqueeDuration = Math.max(20, marqueeRows.length * 1.2); // seconds
   // 外部数据变更时（例如导入Excel）刷新列表，但不触发其他区域重渲染
   useEffect(() => {
     setInventoryTable(initialTable);
     onTableChange?.(initialTable);
   }, [initialTable, onTableChange]);
 
-  // 启动库存同步，只影响该组件
+  // 拉取K3 Cloud库存数据，仅影响该组件
   useEffect(() => {
-    console.log('=== 启动库存数据同步（仅库存卡片） ===');
-    startInventorySync();
+    let cancelled = false;
 
-    const checkInterval = setInterval(() => {
-      const inventory = getCachedInventory();
-      if (inventory.length > 0) {
-        const formattedData = formatInventoryForDashboard(inventory);
-        setInventoryTable(formattedData);
-        onTableChange?.(formattedData);
+    const fetchInventory = async () => {
+      try {
+        const inventory = await queryAllWarehousesInventory();
+        if (!inventory || cancelled) return;
+        const formatted = formatInventoryForDashboard(inventory);
+        setInventoryTable(formatted);
+        onTableChange?.(formatted);
+        console.log('K3 Cloud库存数据示例:', formatted.slice(0, 5));
+      } catch (err) {
+        console.error('拉取K3 Cloud库存数据失败', err);
       }
-    }, 3000);
+    };
+
+    fetchInventory();
+    const checkInterval = setInterval(fetchInventory, 30000); // 30s刷新一次
 
     return () => {
+      cancelled = true;
       clearInterval(checkInterval);
     };
   }, [onTableChange]);
-
-  // 幻灯片行切换
-  useEffect(() => {
-    if (!inventoryRows.length) return;
-    setInventorySlide(prev => prev % inventoryRows.length);
-  }, [inventoryRows.length]);
-
-  useEffect(() => {
-    if (!inventoryRows.length || inventoryPaused) return;
-
-    const timer = setInterval(() => {
-      setInventorySlide(prev => (prev + 1) % inventoryRows.length);
-    }, 5000);
-
-    return () => clearInterval(timer);
-  }, [inventoryRows.length, inventoryPaused]);
 
   return (
     <Card title="库存数据" icon={<Database size={14}/>} className="h-[42%] flex flex-col">
@@ -132,25 +112,28 @@ const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, ini
              <span className="w-1/4 text-right">库存量(KG)</span>
          </div>
          <div
+           ref={scrollRef}
            className="flex-1 overflow-hidden overflow-x-hidden custom-scrollbar"
            onMouseEnter={() => setInventoryPaused(true)}
            onMouseLeave={() => setInventoryPaused(false)}
          >
              <table className="w-full text-[10px] text-left border-collapse">
                  <tbody
-                   key={`inventory-${inventorySlide}`}
-                   className="divide-y divide-slate-800/50 transition-all duration-700"
+                   className="divide-y divide-slate-800/50 inventory-marquee"
+                   style={{
+                     animationDuration: `${marqueeDuration}s`,
+                     animationPlayState: inventoryPaused ? 'paused' : 'running'
+                   }}
                  >
-                     {visibleInventoryRows.length === 0 ? (
+                     {inventoryTable.length === 0 ? (
                        <tr>
                          <td colSpan={4} className="p-3 text-center text-slate-400">暂无库存数据</td>
                        </tr>
                      ) : (
-                       visibleInventoryRows.map((row, idx) => (
+                       marqueeRows.map((row, idx) => (
                          <tr
-                           key={`${row.id}-${inventorySlide}-${idx}`}
-                           className={`${idx % 2 === 0 ? 'bg-slate-800/20' : ''} hover:bg-slate-700/30 transition-colors inventory-slide`}
-                           style={{ animationDelay: `${idx * 80}ms` }}
+                           key={`${row.id}-${idx}`}
+                           className={`${idx % 2 === 0 ? 'bg-slate-800/20' : ''} hover:bg-slate-700/30 transition-colors`}
                          >
                              <td className="p-2 text-cyan-100">{row.name}</td>
                              <td className="p-2 text-slate-400 font-mono">{row.code}</td>
@@ -308,12 +291,12 @@ const App: React.FC = () => {
       )}
 
       {/* Main Grid */}
-      <div className={`relative z-10 grid grid-cols-12 gap-3 transition-all duration-500 ${
+      <div className={`relative z-10 grid grid-cols-12 gap-3 transition-all duration-500 min-h-0 ${
         headerVisible ? 'h-[calc(100vh-80px)]' : 'h-[calc(100vh-20px)]'
       }`}>
         
         {/* Left Column (3/12) */}
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
+        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3 min-h-0">
             
             {/* OEE Section */}
             <Card title="车间设备OEE" icon={<Activity size={14}/>} className="h-[28%]">
@@ -357,7 +340,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Center Column (6/12) */}
-        <div className="col-span-12 lg:col-span-6 flex flex-col gap-3">
+        <div className="col-span-12 lg:col-span-6 flex flex-col gap-3 min-h-0">
             {/* Operations Monitoring - Key Metrics */}
             <Card title="运营监控" className="h-[55%] border-t-2 border-t-cyan-500">
                 <div className="h-full relative flex items-center justify-center pt-4">
@@ -434,7 +417,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Right Column (3/12) */}
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3">
+        <div className="col-span-12 lg:col-span-3 flex flex-col gap-3 min-h-0">
             
             {/* Annual Efficiency */}
             <Card title="年度车间生产效率" className="h-[25%]">

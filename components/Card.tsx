@@ -9,7 +9,7 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, children, className = '', icon }) => {
   return (
-    <div className={`relative bg-slate-800/50 border border-slate-700 backdrop-blur-sm rounded-lg flex flex-col ${className}`}>
+    <div className={`relative bg-slate-800/50 border border-slate-700 backdrop-blur-sm rounded-lg flex flex-col min-h-0 ${className}`}>
         {/* Decorative corners */}
         <div className="absolute -top-px -left-px w-3 h-3 border-t-2 border-l-2 border-cyan-500 rounded-tl-lg"></div>
         <div className="absolute -top-px -right-px w-3 h-3 border-t-2 border-r-2 border-cyan-500 rounded-tr-lg"></div>
@@ -25,7 +25,7 @@ const Card: React.FC<CardProps> = ({ title, children, className = '', icon }) =>
         </div>
 
         {/* Content */}
-        <div className="flex-1 p-4 overflow-hidden relative">
+        <div className="flex-1 p-4 overflow-hidden relative min-h-0">
             {children}
         </div>
     </div>
