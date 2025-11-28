@@ -22,7 +22,7 @@ const mapKeyMetricColor = (color: KeyMetric['color'] | string, fallback: KeyMetr
 
 export const exportDashboardData = (data: DashboardData, filename = 'dashboard-data.xlsx') => {
   if (!window.XLSX) {
-    alert('Excel 库尚未加载，请稍后重试。');
+    alert('Excel 库尚未加载，请稍后重试');
     return;
   }
 
@@ -44,6 +44,7 @@ export const exportDashboardData = (data: DashboardData, filename = 'dashboard-d
   appendSheet(data.monthlyEfficiency, 'MonthlyEfficiency', ['name', 'availability', 'performance', 'quality']);
   appendSheet(data.inventoryMetrics, 'InventoryMetrics', ['label', 'value', 'unit', 'color', 'total']);
   appendSheet(data.inventoryTable, 'InventoryTable', ['id', 'name', 'code', 'warehouse', 'quantity', 'available']);
+  appendSheet(data.inventoryRaw, 'InventoryRaw', ['materialCode', 'materialName', 'warehouseCode', 'warehouseName', 'quantity']);
   appendSheet(
     data.keyMetrics.map((metric, idx) => ({
       ...metric,

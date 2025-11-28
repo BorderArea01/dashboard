@@ -11,12 +11,14 @@ import {
 import Card from './components/Card';
 import { INITIAL_DATA } from './constants';
 import { DashboardData } from './types';
-import { parseExcelFile } from './utils/excelParser';
+import { parseExcelArrayBuffer, parseExcelFile } from './utils/excelParser';
 import { exportDashboardData } from './utils/excelExporter';
 import {
-  formatInventoryForDashboard
+  calculateInventoryMetrics,
+  formatInventoryForDashboard,
+  getInventoryWithCache,
+  hydrateInventoryCache
 } from './services/inventoryService';
-import { queryAllWarehousesInventory } from './services/k3cloud';
 
 type InventoryPanelProps = {
   metrics: DashboardData['inventoryMetrics'];
@@ -25,7 +27,7 @@ type InventoryPanelProps = {
 };
 
 // 库存指标环形圈 - 填满效果（仅用于库存数据指标）
-const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
+const InventoryGaugeRing = ({ value, color, unit, subTitle }: { value: number, color: string, unit?: string, subTitle?: string }) => {
   const data = [{ name: 'val', value: 100 }]; // 填满整个圆环
   return (
       <div className="flex flex-col items-center justify-center relative">
@@ -52,7 +54,6 @@ const InventoryGaugeRing = ({ value, color, title, unit, subTitle }: { value: nu
                    {subTitle && <span className="text-[10px] text-slate-400">{subTitle}</span>}
               </div>
           </div>
-          {title && <span className="text-xs text-slate-300 font-medium mt-1">{title}</span>}
       </div>
   );
 };
@@ -69,38 +70,13 @@ const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, ini
     onTableChange?.(initialTable);
   }, [initialTable, onTableChange]);
 
-  // 拉取K3 Cloud库存数据，仅影响该组件
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchInventory = async () => {
-      try {
-        const inventory = await queryAllWarehousesInventory();
-        if (!inventory || cancelled) return;
-        const formatted = formatInventoryForDashboard(inventory);
-        setInventoryTable(formatted);
-        onTableChange?.(formatted);
-        console.log('K3 Cloud库存数据示例:', formatted.slice(0, 5));
-      } catch (err) {
-        console.error('拉取K3 Cloud库存数据失败', err);
-      }
-    };
-
-    fetchInventory();
-    const checkInterval = setInterval(fetchInventory, 30000); // 30s刷新一次
-
-    return () => {
-      cancelled = true;
-      clearInterval(checkInterval);
-    };
-  }, [onTableChange]);
 
   return (
     <Card title="库存数据" icon={<Database size={14}/>} className="h-[42%] flex flex-col">
          <div className="flex justify-around items-center h-[100px] mb-2 border-b border-slate-700/30">
              {metrics.map((m, i) => (
                  <div key={i} className="scale-90">
-                     <InventoryGaugeRing value={m.value} color={m.color} title={m.label} unit="吨" subTitle={m.value.toString()}/>
+                     <InventoryGaugeRing value={m.value} color={m.color} unit="吨" subTitle={m.label}/>
                  </div>
              ))}
          </div>
@@ -170,6 +146,85 @@ const App: React.FC = () => {
     };
   }, [headerVisible]);
 
+  // ??????????? Excel ???????????
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCachedExcel = async () => {
+      try {
+        const response = await fetch('/dashboard-data.xlsx', { cache: 'no-cache' });
+        if (!response.ok) return;
+        const buffer = await response.arrayBuffer();
+        const parsed = await parseExcelArrayBuffer(buffer);
+        if (cancelled || !parsed) return;
+
+        setData(prev => {
+          const merged: DashboardData = { ...prev, ...parsed };
+          if (parsed.inventoryRaw?.length) {
+            merged.inventoryRaw = parsed.inventoryRaw;
+            merged.inventoryTable = formatInventoryForDashboard(parsed.inventoryRaw);
+            merged.inventoryMetrics = calculateInventoryMetrics(parsed.inventoryRaw);
+            hydrateInventoryCache(parsed.inventoryRaw);
+          }
+          if (merged.inventoryTable) {
+            latestInventoryRef.current = merged.inventoryTable;
+          }
+          return merged;
+        });
+      } catch (error) {
+        console.warn('???????Excel???', error);
+      }
+    };
+
+    loadCachedExcel();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ???/????????????????????
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshInventory = async (forceRefresh = false, persistToExcel = false) => {
+      try {
+        const inventory = await getInventoryWithCache(forceRefresh);
+        if (!inventory || cancelled) return;
+        const table = formatInventoryForDashboard(inventory);
+        const metrics = calculateInventoryMetrics(inventory);
+        let snapshot: DashboardData | null = null;
+
+        setData(prev => {
+          const updated: DashboardData = {
+            ...prev,
+            inventoryRaw: inventory,
+            inventoryTable: table,
+            inventoryMetrics: metrics
+          };
+          snapshot = updated;
+          return updated;
+        });
+
+        latestInventoryRef.current = table;
+
+        if (persistToExcel && snapshot && (window as any)?.XLSX) {
+          exportDashboardData(snapshot, 'dashboard-data.xlsx');
+        }
+      } catch (err) {
+        console.error('???K3 Cloud??????????', err);
+      }
+    };
+
+    refreshInventory(false, true);
+    const refreshTimer = setInterval(() => refreshInventory(true, true), 24 * 60 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(refreshTimer);
+    };
+  }, []);
+
   // 同步外部导入的库存到导出用的ref，避免影响其他区域渲染
   useEffect(() => {
     latestInventoryRef.current = data.inventoryTable;
@@ -181,10 +236,33 @@ const App: React.FC = () => {
     if (input.files && input.files[0]) {
       try {
         const partialData = await parseExcelFile(input.files[0]);
-        setData(prev => ({
+        let merged: DashboardData | null = null;
+
+        setData(prev => {
+          const updated: DashboardData = {
             ...prev,
             ...partialData
-        }));
+          };
+
+          if (partialData.inventoryRaw?.length) {
+            updated.inventoryRaw = partialData.inventoryRaw;
+            updated.inventoryTable = formatInventoryForDashboard(partialData.inventoryRaw);
+            updated.inventoryMetrics = calculateInventoryMetrics(partialData.inventoryRaw);
+            hydrateInventoryCache(partialData.inventoryRaw);
+          } else if (partialData.inventoryTable) {
+            updated.inventoryTable = partialData.inventoryTable;
+          }
+
+          merged = updated;
+          return updated;
+        });
+
+        if (merged?.inventoryTable) {
+          latestInventoryRef.current = merged.inventoryTable;
+        }
+        if (merged) {
+          exportDashboardData(merged, 'dashboard-data.xlsx');
+        }
         alert('Data imported successfully!');
       } catch (error) {
         console.error(error);

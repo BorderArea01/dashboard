@@ -10,13 +10,21 @@ export interface OEEData {
     target: number;
   }
   
-  export interface InventoryItem {
+export interface InventoryItem {
     id: string;
     name: string;
     code: string;
     warehouse: string;
     quantity: number;
     available: number;
+  }
+
+  export interface InventoryRawItem {
+    materialCode: string;
+    materialName: string;
+    warehouseCode: string;
+    warehouseName: string;
+    quantity: number;
   }
   
   export interface KeyMetric {
@@ -52,4 +60,8 @@ export interface OEEData {
     perCapitaEfficiency: { name: string; value: number }[];
     productionTrend: ProductionData[];
     annualKPI: { label: string; value: number; color: string }[];
+    /**
+     * 原始库存数据缓存，用于避免重复请求 K3 并支撑汇总计算
+     */
+    inventoryRaw?: InventoryRawItem[];
   }

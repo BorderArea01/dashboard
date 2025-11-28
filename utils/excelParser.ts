@@ -1,4 +1,4 @@
-import { DashboardData, KeyMetric } from '../types';
+import { DashboardData, InventoryRawItem, KeyMetric } from '../types';
 
 declare global {
   interface Window {
@@ -53,6 +53,145 @@ const normalizeMetricColor = (color: string | undefined, index: number): KeyMetr
     : palette[index % palette.length];
 };
 
+const parseWorkbook = (workbook: any): Partial<DashboardData> => {
+  if (!workbook || !workbook.SheetNames?.length) {
+    throw new Error('Excel 工作簿为空或无法读取');
+  }
+
+  const parsedData: Partial<DashboardData> = {};
+
+  const getSheetRows = (...names: string[]) => {
+    for (const name of names) {
+      const sheet = workbook.Sheets[name];
+      if (sheet) {
+        return window.XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      }
+    }
+    return null;
+  };
+
+  const oeeRows = getSheetRows('OEE', '设备OEE');
+  if (oeeRows) {
+    parsedData.oee = oeeRows.map((row: any, idx: number) => ({
+      name: pickValue(row, ['name', '指标', 'label'], `OEE-${idx + 1}`),
+      value: toNumber(pickValue(row, ['value', '数值', 'score'], 0)),
+      color: pickValue(row, ['color', '颜色'], '#06b6d4'),
+    }));
+  }
+
+  const monthlyRows = getSheetRows('MonthlyEfficiency', '车间效率');
+  if (monthlyRows) {
+    parsedData.monthlyEfficiency = monthlyRows.map((row: any, idx: number) => ({
+      name: pickValue(row, ['name', '月份'], `${idx + 1}月`),
+      availability: toNumber(pickValue(row, ['availability', '可用性效率'], 0)),
+      performance: toNumber(pickValue(row, ['performance', '性能效率'], 0)),
+      quality: toNumber(pickValue(row, ['quality', '质量效率'], 0)),
+    }));
+  }
+
+  const inventoryMetricsRows = getSheetRows('InventoryMetrics', '库存指标');
+  if (inventoryMetricsRows) {
+    parsedData.inventoryMetrics = inventoryMetricsRows.map((row: any) => ({
+      label: pickValue(row, ['label', '仓库'], ''),
+      value: toNumber(pickValue(row, ['value', '当前量'], 0)),
+      unit: pickValue(row, ['unit', '单位'], '吨'),
+      color: pickValue(row, ['color', '颜色'], '#3b82f6'),
+      total: toNumber(pickValue(row, ['total', '总量', '容量'], 0)),
+    }));
+  }
+
+  const inventoryRows = getSheetRows('InventoryTable', 'Inventory', '库存');
+  if (inventoryRows) {
+    parsedData.inventoryTable = inventoryRows.map((row: any, index: number) => ({
+      id: pickValue(row, ['id', 'ID'], `${index + 1}`),
+      name: pickValue(row, ['name', '物料名称'], ''),
+      code: pickValue(row, ['code', '物料编码'], ''),
+      warehouse: pickValue(row, ['warehouse', '仓库', '仓库名称'], ''),
+      quantity: toNumber(pickValue(row, ['quantity', '库存量'], 0)),
+      available: toNumber(pickValue(row, ['available', '可用量'], pickValue(row, ['quantity', '库存量'], 0))),
+    }));
+  }
+
+  const inventoryRawRows = getSheetRows('InventoryRaw', '库存原始数据', 'InventoryCache');
+  if (inventoryRawRows) {
+    parsedData.inventoryRaw = inventoryRawRows.map((row: any) => ({
+      materialCode: pickValue(row, ['materialCode', '物料编码', 'code'], ''),
+      materialName: pickValue(row, ['materialName', '物料名称', 'name'], ''),
+      warehouseCode: pickValue(row, ['warehouseCode', '仓库编码'], ''),
+      warehouseName: pickValue(row, ['warehouseName', '仓库名称', '仓库'], ''),
+      quantity: toNumber(pickValue(row, ['quantity', '库存量', '库存数'], 0)),
+    })) as InventoryRawItem[];
+  }
+
+  const metricRows = getSheetRows('KeyMetrics', 'Metrics', '指标');
+  if (metricRows) {
+    parsedData.keyMetrics = metricRows.map((row: any, idx: number) => ({
+      id: pickValue(row, ['id'], `m-import-${idx}`),
+      label: pickValue(row, ['label', '指标名称'], ''),
+      value: pickValue(row, ['value', '数值'], ''),
+      unit: pickValue(row, ['unit', '单位'], undefined),
+      color: normalizeMetricColor(pickValue(row, ['color', '颜色'], ''), idx),
+    }));
+  }
+
+  const energyTrendRows = getSheetRows('EnergyTrend', '能耗趋势');
+  if (energyTrendRows) {
+    parsedData.energyTrend = energyTrendRows.map((row: any, idx: number) => ({
+      time: pickValue(row, ['time', '月份', '日期'], `${idx + 1}`),
+      value: toNumber(pickValue(row, ['value', '用电量'], 0)),
+    }));
+  }
+
+  const energyStatsRows = getSheetRows('EnergyStats', '能耗统计');
+  if (energyStatsRows) {
+    parsedData.energyStats = energyStatsRows.map((row: any) => ({
+      label: pickValue(row, ['label', '名称'], ''),
+      value: toNumber(pickValue(row, ['value', '数值'], 0)),
+      unit: pickValue(row, ['unit', '单位'], ''),
+      color: pickValue(row, ['color', '颜色'], '#06b6d4'),
+    }));
+  }
+
+  const teamEfficiencyRows = getSheetRows('TeamEfficiency', '班组效率');
+  if (teamEfficiencyRows) {
+    parsedData.teamEfficiency = teamEfficiencyRows.map((row: any) => ({
+      name: pickValue(row, ['name', '班组'], ''),
+      group1: toNumber(pickValue(row, ['group1', '一组'], 0)),
+      group2: toNumber(pickValue(row, ['group2', '二组'], 0)),
+      group3: toNumber(pickValue(row, ['group3', '三组'], 0)),
+      group4: toNumber(pickValue(row, ['group4', '四组'], 0)),
+    }));
+  }
+
+  const perCapitaRows = getSheetRows('PerCapitaEfficiency', '人均效率');
+  if (perCapitaRows) {
+    parsedData.perCapitaEfficiency = perCapitaRows.map((row: any, idx: number) => ({
+      name: pickValue(row, ['name', '班组'], `${idx + 1}`),
+      value: toNumber(pickValue(row, ['value', '效率'], 0)),
+    }));
+  }
+
+  const productionRows = getSheetRows('ProductionTrend', 'Production', '生产趋势');
+  if (productionRows) {
+    parsedData.productionTrend = productionRows.map((row: any) => ({
+      name: pickValue(row, ['name', '月份'], ''),
+      value: toNumber(pickValue(row, ['value', '实际产量'], 0)),
+      target: toNumber(pickValue(row, ['target', '计划目标'], 0)),
+    }));
+  }
+
+  const annualKPIRows = getSheetRows('AnnualKPI', '年度KPI');
+  if (annualKPIRows) {
+    parsedData.annualKPI = annualKPIRows.map((row: any) => ({
+      label: pickValue(row, ['label', '指标'], ''),
+      value: toNumber(pickValue(row, ['value', '达成率'], 0)),
+      color: pickValue(row, ['color', '颜色'], '#3b82f6'),
+    }));
+  }
+
+  return parsedData;
+};
+
 export const parseExcelFile = (file: File): Promise<Partial<DashboardData>> => {
   return loadXLSX().then(() => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -61,131 +200,7 @@ export const parseExcelFile = (file: File): Promise<Partial<DashboardData>> => {
       try {
         const data = e.target?.result as ArrayBuffer;
         const workbook = window.XLSX.read(data, { type: 'array' });
-        if (!workbook || !workbook.SheetNames?.length) {
-          throw new Error('Excel 工作簿为空或无法读取');
-        }
-
-        const parsedData: Partial<DashboardData> = {};
-
-        const getSheetRows = (...names: string[]) => {
-          for (const name of names) {
-            const sheet = workbook.Sheets[name];
-            if (sheet) {
-              return window.XLSX.utils.sheet_to_json(sheet, { defval: '' });
-            }
-          }
-          return null;
-        };
-
-        const oeeRows = getSheetRows('OEE', '设备OEE');
-        if (oeeRows) {
-          parsedData.oee = oeeRows.map((row: any, idx: number) => ({
-            name: pickValue(row, ['name', '指标', 'label'], `OEE-${idx + 1}`),
-            value: toNumber(pickValue(row, ['value', '数值', 'score'], 0)),
-            color: pickValue(row, ['color', '颜色'], '#06b6d4'),
-          }));
-        }
-
-        const monthlyRows = getSheetRows('MonthlyEfficiency', '车间效率');
-        if (monthlyRows) {
-          parsedData.monthlyEfficiency = monthlyRows.map((row: any, idx: number) => ({
-            name: pickValue(row, ['name', '月份'], `${idx + 1}月`),
-            availability: toNumber(pickValue(row, ['availability', '可用性效率'], 0)),
-            performance: toNumber(pickValue(row, ['performance', '性能效率'], 0)),
-            quality: toNumber(pickValue(row, ['quality', '质量效率'], 0)),
-          }));
-        }
-
-        const inventoryMetricsRows = getSheetRows('InventoryMetrics', '库存指标');
-        if (inventoryMetricsRows) {
-          parsedData.inventoryMetrics = inventoryMetricsRows.map((row: any) => ({
-            label: pickValue(row, ['label', '仓库'], ''),
-            value: toNumber(pickValue(row, ['value', '当前量'], 0)),
-            unit: pickValue(row, ['unit', '单位'], '吨'),
-            color: pickValue(row, ['color', '颜色'], '#3b82f6'),
-            total: toNumber(pickValue(row, ['total', '总量', '容量'], 0)),
-          }));
-        }
-
-        const inventoryRows = getSheetRows('InventoryTable', 'Inventory', '库存');
-        if (inventoryRows) {
-          parsedData.inventoryTable = inventoryRows.map((row: any, index: number) => ({
-            id: pickValue(row, ['id', 'ID'], `${index + 1}`),
-            name: pickValue(row, ['name', '物料名称'], ''),
-            code: pickValue(row, ['code', '物料编码'], ''),
-            warehouse: pickValue(row, ['warehouse', '仓库', '仓库名称'], ''),
-            quantity: toNumber(pickValue(row, ['quantity', '库存量'], 0)),
-            available: toNumber(pickValue(row, ['available', '可用量'], pickValue(row, ['quantity', '库存量'], 0))),
-          }));
-        }
-
-        const metricRows = getSheetRows('KeyMetrics', 'Metrics', '指标');
-        if (metricRows) {
-          parsedData.keyMetrics = metricRows.map((row: any, idx: number) => ({
-            id: pickValue(row, ['id'], `m-import-${idx}`),
-            label: pickValue(row, ['label', '指标名称'], ''),
-            value: pickValue(row, ['value', '值'], ''),
-            unit: pickValue(row, ['unit', '单位'], undefined),
-            color: normalizeMetricColor(pickValue(row, ['color', '颜色'], ''), idx),
-          }));
-        }
-
-        const energyTrendRows = getSheetRows('EnergyTrend', '能耗趋势');
-        if (energyTrendRows) {
-          parsedData.energyTrend = energyTrendRows.map((row: any, idx: number) => ({
-            time: pickValue(row, ['time', '月份', '日期'], `${idx + 1}`),
-            value: toNumber(pickValue(row, ['value', '用电量'], 0)),
-          }));
-        }
-
-        const energyStatsRows = getSheetRows('EnergyStats', '能耗统计');
-        if (energyStatsRows) {
-          parsedData.energyStats = energyStatsRows.map((row: any) => ({
-            label: pickValue(row, ['label', '名称'], ''),
-            value: toNumber(pickValue(row, ['value', '数值'], 0)),
-            unit: pickValue(row, ['unit', '单位'], ''),
-            color: pickValue(row, ['color', '颜色'], '#06b6d4'),
-          }));
-        }
-
-        const teamEfficiencyRows = getSheetRows('TeamEfficiency', '班组效率');
-        if (teamEfficiencyRows) {
-          parsedData.teamEfficiency = teamEfficiencyRows.map((row: any) => ({
-            name: pickValue(row, ['name', '班组'], ''),
-            group1: toNumber(pickValue(row, ['group1', '一组'], 0)),
-            group2: toNumber(pickValue(row, ['group2', '二组'], 0)),
-            group3: toNumber(pickValue(row, ['group3', '三组'], 0)),
-            group4: toNumber(pickValue(row, ['group4', '四组'], 0)),
-          }));
-        }
-
-        const perCapitaRows = getSheetRows('PerCapitaEfficiency', '人均效率');
-        if (perCapitaRows) {
-          parsedData.perCapitaEfficiency = perCapitaRows.map((row: any, idx: number) => ({
-            name: pickValue(row, ['name', '班组'], `${idx + 1}`),
-            value: toNumber(pickValue(row, ['value', '效率'], 0)),
-          }));
-        }
-
-        const productionRows = getSheetRows('ProductionTrend', 'Production', '生产趋势');
-        if (productionRows) {
-          parsedData.productionTrend = productionRows.map((row: any) => ({
-            name: pickValue(row, ['name', '月份'], ''),
-            value: toNumber(pickValue(row, ['value', '实际产量'], 0)),
-            target: toNumber(pickValue(row, ['target', '计划目标'], 0)),
-          }));
-        }
-
-        const annualKPIRows = getSheetRows('AnnualKPI', '年度KPI');
-        if (annualKPIRows) {
-          parsedData.annualKPI = annualKPIRows.map((row: any) => ({
-            label: pickValue(row, ['label', '指标'], ''),
-            value: toNumber(pickValue(row, ['value', '达成率'], 0)),
-            color: pickValue(row, ['color', '颜色'], '#3b82f6'),
-          }));
-        }
-
-        resolve(parsedData);
+        resolve(parseWorkbook(workbook));
       } catch (error) {
         reject(error);
       }
@@ -194,4 +209,11 @@ export const parseExcelFile = (file: File): Promise<Partial<DashboardData>> => {
     reader.onerror = (error) => reject(error);
     reader.readAsArrayBuffer(file);
   }));
+};
+
+export const parseExcelArrayBuffer = (buffer: ArrayBuffer): Promise<Partial<DashboardData>> => {
+  return loadXLSX().then(() => {
+    const workbook = window.XLSX.read(buffer, { type: 'array' });
+    return parseWorkbook(workbook);
+  });
 };
