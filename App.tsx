@@ -49,9 +49,10 @@ const InventoryGaugeRing = ({ value, color, unit, subTitle }: { value: number, c
                       </Pie>
                   </PieChart>
               </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
-                   <span className="text-lg md:text-xl font-bold font-mono text-slate-100">{value}{unit || '%'}</span>
-                   {subTitle && <span className="text-[10px]" style={{ color }}>{subTitle}</span>}
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                   <span className="text-base md:text-lg font-bold font-mono text-slate-100 leading-tight">{value}</span>
+                   <span className="text-[10px] text-slate-300 leading-tight">{unit || '%'}</span>
+                   {subTitle && <span className="text-[9px] mt-0.5" style={{ color }}>{subTitle}</span>}
               </div>
           </div>
       </div>
