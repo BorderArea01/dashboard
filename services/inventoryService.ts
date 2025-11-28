@@ -210,12 +210,20 @@ export function calculateInventoryMetrics(inventory: InventoryRawItem[]): Dashbo
 
 /**
  * 格式化库存数据为Dashboard所需格式
+ * 按库存量降序排序，避免连续显示相同物料，提升视觉美观性
  */
 export function formatInventoryForDashboard(inventory: InventoryRawItem[]): DashboardData['inventoryTable'] {
   const filtered = inventory.filter(item => (item.quantity ?? 0) > 0);
   const source = filtered.length > 0 ? filtered : inventory;
 
-  return source.map((item, index) => {
+  // 按库存量降序排序
+  const sorted = [...source].sort((a, b) => {
+    const qtyA = Number(a.quantity ?? 0);
+    const qtyB = Number(b.quantity ?? 0);
+    return qtyB - qtyA; // 降序：库存量大的在前
+  });
+
+  return sorted.map((item, index) => {
     const quantity = Number(item.quantity ?? 0);
     return {
       id: item.materialCode ? `${item.materialCode}-${index}` : `inv-${index}`,
