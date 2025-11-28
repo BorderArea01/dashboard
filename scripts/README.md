@@ -6,7 +6,11 @@
 
 ## 解决方案
 
-通过服务器端定期同步K3库存数据到 `public/inventory-cache.json` 文件，所有用户从该缓存文件读取数据，实现数据共享。
+通过服务器端定期同步K3库存数据，生成两种格式的缓存文件：
+1. **inventory-cache.json** - JSON格式，快速加载（优先）
+2. **dashboard-data.xlsx** - Excel格式，完整数据（包含所有维度）
+
+所有用户从这些缓存文件读取数据，实现数据共享。
 
 ## 使用方法
 
@@ -18,9 +22,16 @@
 npm run sync:inventory
 ```
 
-这会立即从K3 Cloud获取最新库存数据并保存到：
+这会立即从K3 Cloud获取最新库存数据并生成：
+
+**JSON缓存文件**:
 - `public/inventory-cache.json`
-- `dist/inventory-cache.json`（如果存在）
+- `dist/inventory-cache.json`
+
+**Excel完整数据**:
+- `dashboard-data.xlsx`（根目录）
+- `public/dashboard-data.xlsx`
+- `dist/dashboard-data.xlsx`
 
 ### 方式二：后台持续同步（推荐用于生产环境）
 
@@ -103,17 +114,34 @@ Get-Content public\inventory-cache.json
 
 ## 数据流程
 
+```
+                    服务器端同步脚本
+                          ↓
+        ┌─────────────────┴─────────────────┐
+        ↓                                   ↓
+inventory-cache.json                dashboard-data.xlsx
+(JSON格式，快速加载)                 (Excel格式，完整数据)
+        ↓                                   ↓
+    客户端优先加载JSON              延迟加载Excel（包含OEE等）
+```
+
 1. **服务器端**：`syncInventoryCache.ts` 脚本从K3 Cloud获取数据
-2. **缓存文件**：数据保存到 `public/inventory-cache.json`
-3. **客户端**：前端从缓存文件读取数据（优先级高于直接调用K3 API）
+2. **生成文件**：
+   - `inventory-cache.json` - 库存数据（JSON格式）
+   - `dashboard-data.xlsx` - 完整看板数据（Excel格式）
+3. **客户端加载**：
+   - 优先加载JSON（快速，1秒内）
+   - 延迟加载Excel（完整，2-3秒后）
 
 ## 注意事项
 
 1. **网络访问**：确保运行同步脚本的服务器可以访问K3 Cloud API
-2. **文件权限**：确保脚本有写入 `public/` 和 `dist/` 目录的权限
+2. **文件权限**：确保脚本有写入项目根目录、`public/` 和 `dist/` 的权限
 3. **缓存时效**：默认缓存有效期24小时，可在 `services/inventoryService.ts` 中修改
 4. **错误处理**：同步失败时，客户端会继续使用旧缓存数据
 5. **并发访问**：多用户同时访问时，都从同一个缓存文件读取，不会产生重复请求
+6. **Excel文件**：自动生成的Excel包含完整看板数据，会保留现有的非库存数据（OEE、能耗等）
+7. **磁盘空间**：JSON约10MB，Excel约15MB，确保有足够磁盘空间
 
 ## 故障排查
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, PieChart, Pie, Cell, LineChart, Line, Legend,
@@ -63,8 +63,24 @@ const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, ini
   const [inventoryTable, setInventoryTable] = useState(initialTable);
   const [inventoryPaused, setInventoryPaused] = useState<boolean>(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const marqueeRows = inventoryTable.length ? [...inventoryTable, ...inventoryTable] : [];
-  const marqueeDuration = Math.max(20, marqueeRows.length * 1.2); // seconds
+  
+  // 性能优化：限制显示数量，避免渲染过多DOM节点
+  const MAX_DISPLAY_ROWS = 200; // 最多显示200条记录（滚动后100条循环）
+  const displayTable = React.useMemo(() => {
+    if (inventoryTable.length === 0) return [];
+    // 只取有库存的前200条记录
+    const filtered = inventoryTable.filter(item => item.quantity > 0);
+    return filtered.slice(0, MAX_DISPLAY_ROWS);
+  }, [inventoryTable]);
+  
+  const marqueeRows = React.useMemo(() => {
+    return displayTable.length ? [...displayTable, ...displayTable] : [];
+  }, [displayTable]);
+  
+  const marqueeDuration = React.useMemo(() => {
+    return Math.max(20, marqueeRows.length * 1.2);
+  }, [marqueeRows.length]);
+  
   // 外部数据变更时（例如导入Excel）刷新列表，但不触发其他区域重渲染
   useEffect(() => {
     setInventoryTable(initialTable);
@@ -102,7 +118,7 @@ const InventoryPanel: React.FC<InventoryPanelProps> = React.memo(({ metrics, ini
                      animationPlayState: inventoryPaused ? 'paused' : 'running'
                    }}
                  >
-                     {inventoryTable.length === 0 ? (
+                     {displayTable.length === 0 ? (
                        <tr>
                          <td colSpan={4} className="p-3 text-center text-slate-400">暂无库存数据</td>
                        </tr>
@@ -147,37 +163,62 @@ const App: React.FC = () => {
     };
   }, [headerVisible]);
 
-  // ??????????? Excel ???????????
+  // 优化：优先加载轻量级缓存，延迟加载Excel
   useEffect(() => {
     let cancelled = false;
 
-    const loadCachedExcel = async () => {
+    const loadCachedData = async () => {
       try {
-        const response = await fetch('/dashboard-data.xlsx', { cache: 'no-cache' });
-        if (!response.ok) return;
-        const buffer = await response.arrayBuffer();
-        const parsed = await parseExcelArrayBuffer(buffer);
-        if (cancelled || !parsed) return;
+        // 先尝试从inventory-cache.json加载（更快）
+        const inventory = await getInventoryWithCache(false);
+        if (cancelled || !inventory) return;
+        
+        const table = formatInventoryForDashboard(inventory);
+        const metrics = calculateInventoryMetrics(inventory);
+        
+        setData(prev => ({
+          ...prev,
+          inventoryRaw: inventory,
+          inventoryTable: table,
+          inventoryMetrics: metrics
+        }));
+        
+        latestInventoryRef.current = table;
+        console.log('库存数据加载完成（来自缓存）');
+        
+        // 延迟加载Excel完整数据（包含其他sheet）
+        setTimeout(async () => {
+          try {
+            const response = await fetch('/dashboard-data.xlsx', { cache: 'no-cache' });
+            if (!response.ok || cancelled) return;
+            
+            const buffer = await response.arrayBuffer();
+            const parsed = await parseExcelArrayBuffer(buffer);
+            if (cancelled || !parsed) return;
 
-        setData(prev => {
-          const merged: DashboardData = { ...prev, ...parsed };
-          if (parsed.inventoryRaw?.length) {
-            merged.inventoryRaw = parsed.inventoryRaw;
-            merged.inventoryTable = formatInventoryForDashboard(parsed.inventoryRaw);
-            merged.inventoryMetrics = calculateInventoryMetrics(parsed.inventoryRaw);
-            hydrateInventoryCache(parsed.inventoryRaw);
+            setData(prev => {
+              const merged: DashboardData = { ...prev, ...parsed };
+              if (parsed.inventoryRaw?.length) {
+                merged.inventoryRaw = parsed.inventoryRaw;
+                merged.inventoryTable = formatInventoryForDashboard(parsed.inventoryRaw);
+                merged.inventoryMetrics = calculateInventoryMetrics(parsed.inventoryRaw);
+                hydrateInventoryCache(parsed.inventoryRaw);
+                latestInventoryRef.current = merged.inventoryTable;
+              }
+              return merged;
+            });
+            console.log('Excel完整数据加载完成');
+          } catch (error) {
+            console.warn('加载Excel文件失败，继续使用缓存数据:', error);
           }
-          if (merged.inventoryTable) {
-            latestInventoryRef.current = merged.inventoryTable;
-          }
-          return merged;
-        });
+        }, 1000); // 延迟1秒加载Excel
+        
       } catch (error) {
-        console.warn('???????Excel???', error);
+        console.warn('加载缓存数据失败:', error);
       }
     };
 
-    loadCachedExcel();
+    loadCachedData();
 
     return () => {
       cancelled = true;
@@ -231,8 +272,8 @@ const App: React.FC = () => {
     latestInventoryRef.current = data.inventoryTable;
   }, [data.inventoryTable]);
 
-  // File Upload Handler
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File Upload Handler - 使用useCallback避免重复创建
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
     if (input.files && input.files[0]) {
       try {
@@ -274,18 +315,18 @@ const App: React.FC = () => {
         input.value = '';
       }
     }
-  };
+  }, [data]);
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     exportDashboardData({
       ...data,
       inventoryTable: latestInventoryRef.current
     });
-  };
+  }, [data]);
   
   // Reusable Gauge Ring Component - 根据值显示进度
-  const GaugeRing = ({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
-    const data = [{ name: 'val', value: value }, { name: 'rem', value: 100 - value }];
+  const GaugeRing = React.memo(({ value, color, title, unit, subTitle }: { value: number, color: string, title?: string, unit?: string, subTitle?: string }) => {
+    const data = useMemo(() => [{ name: 'val', value: value }, { name: 'rem', value: 100 - value }], [value]);
     return (
         <div className="flex flex-col items-center justify-center relative">
             <div className="relative w-20 h-20 md:w-24 md:h-24">
@@ -315,7 +356,7 @@ const App: React.FC = () => {
             {title && <span className="text-xs text-slate-300 font-medium mt-1">{title}</span>}
         </div>
     );
-  };
+  });
 
   return (
     <div className="min-h-screen bg-[#0b1121] text-slate-200 p-2 font-sans overflow-hidden bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-blend-overlay">
