@@ -151,6 +151,7 @@ export async function queryAllWarehousesInventory(): Promise<InventoryItem[]>
 ```bash
 npm install
 npm run dev
+# 开发服务器将在 http://localhost:7823 启动
 ```
 
 ### 构建部署
