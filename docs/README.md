@@ -147,17 +147,33 @@ export async function queryAllWarehousesInventory(): Promise<InventoryItem[]>
 
 ## 开发指南
 
-### 项目启动
+### 快速开始
+
+#### Windows/本地开发
 ```bash
 npm install
 npm run dev
 # 开发服务器将在 http://localhost:7823 启动
 ```
 
+#### Linux 服务器部署
+详细的 Linux 环境部署指南请参考：**[LINUX-SETUP.md](./LINUX-SETUP.md)**
+
+支持多种部署方式：
+- 使用 pnpm 开发运行
+- 使用 npm 开发运行  
+- 使用 Docker 部署
+- 生产环境部署（Nginx + PM2）
+
 ### 构建部署
 ```bash
 npm run build
 ```
+
+更多部署选项：
+- **Linux 环境**: [LINUX-SETUP.md](./LINUX-SETUP.md)
+- **Docker 部署**: [DOCKER.md](./DOCKER.md)
+- **生产环境**: [DEPLOYMENT.md](./DEPLOYMENT.md)
 
 ### K3 Cloud API测试
 ```bash

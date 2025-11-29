@@ -54,11 +54,17 @@ COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# 创建数据目录（用于持久化缓存文件）
-RUN mkdir -p /data && \
+# 创建必要的目录
+RUN mkdir -p /data /app/public /app/dist && \
     # 创建软链接，将缓存文件指向持久化目录
     ln -sf /data/inventory-cache.json /usr/share/nginx/html/inventory-cache.json && \
     ln -sf /data/dashboard-data.xlsx /usr/share/nginx/html/dashboard-data.xlsx && \
+    # 在 /app/public 也创建软链接，供同步脚本使用
+    ln -sf /data/inventory-cache.json /app/public/inventory-cache.json && \
+    ln -sf /data/dashboard-data.xlsx /app/public/dashboard-data.xlsx && \
+    # 在 /app/dist 也创建软链接
+    ln -sf /data/inventory-cache.json /app/dist/inventory-cache.json && \
+    ln -sf /data/dashboard-data.xlsx /app/dist/dashboard-data.xlsx && \
     # 设置权限
     chown -R node:node /app /data /usr/share/nginx/html
 

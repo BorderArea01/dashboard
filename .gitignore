@@ -13,7 +13,6 @@ dist-ssr
 *.local
 docs
 .claude
-.gitignore
 
 # Editor directories and files
 .vscode/*

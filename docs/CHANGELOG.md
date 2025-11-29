@@ -2,6 +2,94 @@
 
 ## 2025-11-29
 
+### 新增功能
+
+#### 1. 创建 Docker 启动脚本
+**文件**: `docker-entrypoint.sh`, `Dockerfile`
+
+**功能说明**:
+- 新增 Docker 容器启动脚本，修复构建错误
+- 同时管理 Nginx 和 Node.js 同步服务两个进程
+- 自动创建和配置数据目录
+- 支持健康检查端点
+- 进程监控和异常退出处理
+
+**脚本功能**:
+```bash
+# 启动流程
+1. 检查并初始化数据目录（/data, /app/public, /app/dist）
+2. 配置缓存文件软链接（支持多路径访问）
+3. 创建健康检查端点
+4. 启动 Nginx 服务（端口 80）
+5. 启动库存同步服务（后台运行）
+6. 监控进程状态
+```
+
+**目录结构**:
+```
+/data/                           # 持久化数据卷
+  ├── inventory-cache.json       # 实际数据存储
+  └── dashboard-data.xlsx
+
+/usr/share/nginx/html/           # Nginx 静态文件
+  ├── inventory-cache.json  →  /data/inventory-cache.json
+  └── dashboard-data.xlsx   →  /data/dashboard-data.xlsx
+
+/app/public/                     # 同步脚本写入路径
+  ├── inventory-cache.json  →  /data/inventory-cache.json
+  └── dashboard-data.xlsx   →  /data/dashboard-data.xlsx
+
+/app/dist/                       # 备用写入路径
+  ├── inventory-cache.json  →  /data/inventory-cache.json
+  └── dashboard-data.xlsx   →  /data/dashboard-data.xlsx
+```
+
+**修复问题**:
+- ✅ 解决 Docker 构建时 `docker-entrypoint.sh: not found` 错误
+- ✅ 解决同步脚本 `ENOENT: no such file or directory, open '/app/public/inventory-cache.json'` 错误
+- ✅ 确保容器内两个服务正常运行
+- ✅ 统一数据存储到 `/data` 卷，实现真正的持久化
+
+#### 2. Linux 环境部署完整指南
+**文件**: `docs/LINUX-SETUP.md`
+
+**文档内容**:
+- **方式一**: 使用 pnpm 开发运行（详细步骤）
+  - Node.js 安装（支持 Ubuntu/Debian/CentOS/Rocky/Fedora）
+  - pnpm 安装和配置
+  - 项目克隆和依赖安装
+  - 开发服务器启动和访问
+  - 后台运行（PM2/tmux）
+  - 常见问题排查
+
+- **方式二**: 使用 npm 开发运行
+  - 适合不使用 pnpm 的场景
+
+- **方式三**: 使用 Docker 部署
+  - Docker Engine 完整安装步骤
+  - 镜像构建和容器运行
+  - Docker Compose 配置
+
+- **方式四**: 生产环境部署
+  - 构建生产版本
+  - Nginx 配置和部署
+  - PM2 进程管理
+  - 定时任务配置
+  - HTTPS 证书配置
+
+- **附加内容**:
+  - 一键部署脚本
+  - 监控和维护命令
+  - 性能优化建议
+  - 安全配置建议
+  - 故障排查清单
+
+**适用场景**:
+- 从零开始在 Linux 服务器部署项目
+- 开发环境快速搭建
+- 生产环境标准化部署
+- 问题排查和性能优化
+
 ### 配置调整
 
 #### 修改开发服务器端口
